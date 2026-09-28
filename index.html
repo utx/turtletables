@@ -585,7 +585,7 @@ button.card{font:inherit;color:inherit;cursor:pointer}
 
     <div class="actions">
       <button class="bigbtn b-rescue" data-go="missions"><span class="ico">🛟</span><b>Rescue missions</b><small id="missionHint">Rescue turtles with times tables</small></button>
-      <button class="bigbtn b-sprint" id="sprintBtn"><span class="ico">⚡</span><b>Shell Sprint</b><small id="sprintHint">60 seconds of facts. Earn coins.</small></button>
+      <button class="bigbtn b-sprint" id="sprintBtn"><span class="ico">⚡</span><b>Shell Sprint</b><small id="sprintHint">60 seconds. Coins for facts you level up.</small></button>
       <button class="bigbtn b-map" data-go="map"><span class="ico">🗺️</span><b>Table Map</b><small id="mapHint">See every fact you know</small></button>
       <button class="bigbtn b-shop" data-go="shop"><span class="ico">🛍️</span><b>Shell Shop</b><small id="shopHint">Fences, music, trampolines</small></button>
       <button class="bigbtn b-book" data-go="book"><span class="ico">📖</span><b>Turtle Book</b><small id="bookHint">Everyone out there</small></button>
@@ -1252,7 +1252,7 @@ function renderHome(){
   const left=TURTLES.length-S.owned.length-S.lost.length;
   $('#bookHint').textContent=left>0?`${left} turtles still out at sea`:'Everyone has been found!';
   $('#mapHint').textContent=`${fluentCount()} of 78 facts are gold`;
-  $('#sprintHint').textContent=S.sprintBest?`Your best: ${S.sprintBest} facts`:'60 seconds of facts. Earn coins.';
+  $('#sprintHint').textContent=S.sprintBest?`Your best: ${S.sprintBest} facts`:'60 seconds. Coins for facts you level up.';
   renderLostBar();
   buildPen();
 }
@@ -2290,15 +2290,33 @@ function explainFact(x,y){
   }
   const rh=RHYME[factKey(x,y)];return rh?s+' '+rh:s;
 }
-function recordFact(a,b,ok,fast){
-  if(a<1||b<1||a>12||b>12)return;
-  const k=factKey(a,b),m=S.m[k]||(S.m[k]={l:0,s:0,w:0});m.s++;
-  const before=m.l;
-  if(ok){if(fast)m.l=Math.min(3,m.l+1);else if(m.l===0)m.l=1}
-  else{m.w++;m.l=Math.max(0,m.l-2)}
-  if(G&&m.l===3&&before<3&&!G.newGold.includes(k))G.newGold.push(k);
-  saveSoon();
+/* Coins pay for learning: each fact pays once per level on its first climb to gold.
+   Easy facts pay little, hard facts pay most. Gold facts fade after FADE_DAYS away and can be re-earned once. */
+const FADE_DAYS=5,PAY=[[0,0,1],[1,2,4],[1,3,6]];
+function factTier(a,b){const lo=Math.min(a,b),hi=Math.max(a,b);if(lo===1||[2,5,10].includes(lo)||[2,5,10].includes(hi)||(hi===11&&lo<=9))return 0;if(lo>=6&&hi!==10&&hi!==11)return 2;return 1}
+function factCoinsLeft(a,b){const m=mrec(a,b),p=m.p!=null?m.p:m.l,row=PAY[factTier(a,b)];let c=0;for(let l=p;l<3;l++)c+=row[l];return c}
+function coinsLeftAll(){let c=0;for(let a=1;a<=12;a++)for(let b=a;b<=12;b++)c+=factCoinsLeft(a,b);return c}
+function decayFacts(){
+  const now=Date.now();
+  Object.entries(S.m).forEach(([k,m])=>{
+    if(m.p==null)m.p=m.l;if(!m.t)m.t=now;
+    if(m.l===3&&now-m.t>FADE_DAYS*864e5){m.l=2;m.p=2;m.faded=1}
+  });
+  save();
 }
+function recordFact(a,b,ok,fast){
+  if(a<1||b<1||a>12||b>12)return 0;
+  const k=factKey(a,b),m=S.m[k]||(S.m[k]={l:0,s:0,w:0,p:0});m.s++;
+  const before=m.l;if(m.p==null)m.p=before;
+  if(ok){if(fast)m.l=Math.min(3,m.l+1);else if(m.l===0)m.l=1;m.t=Date.now()}
+  else{m.w++;m.l=Math.max(0,m.l-2)}
+  let coins=0;const row=PAY[factTier(a,b)];
+  while(m.p<m.l){coins+=row[m.p];m.p++}
+  if(m.l===3)m.faded=0;
+  if(G&&m.l===3&&before<3&&!G.newGold.includes(k))G.newGold.push(k);
+  saveSoon();return coins;
+}
+const starBonus=L=>8+2*L.id;
 const EQUALS=[[[3,8],[4,6]],[[2,12],[3,8]],[[4,9],[6,6]],[[3,12],[4,9]],[[2,9],[3,6]],[[4,10],[5,8]],[[6,8],[4,12]],[[2,10],[4,5]],[[3,10],[5,6]],[[6,10],[5,12]],[[2,8],[4,4]],[[3,4],[2,6]],[[6,12],[8,9]],[[4,6],[2,12]]];
 function genQ(cfg){
   let type=pickType(cfg.types);
@@ -2402,7 +2420,7 @@ function openIntro(L){
   $('#introTip').innerHTML=`💡 ${L.tip}`;
   $('#introPrizes').innerHTML=prizesOf(L).map((t,i)=>{const got=S.owned.includes(t.id),lost=S.lost.some(l=>l.id===t.id);
     return `<div class="prizecard"><div class="pic">${turtleSVG(t,{silhouette:!got})}</div><div class="st">${'★'.repeat(i+1)}</div><b>${t.name}</b><small>${got?'Already home':lost?'Taken! Win this star to get them back':'Waiting to be rescued'}</small></div>`}).join('');
-  $('#introRules').innerHTML=`<li>📝 ${L.q} questions. No time limit.</li><li>⚡ Answer within ${L.bonus} seconds for a +5 speed bonus. Quick answers also turn facts gold on the Table Map.</li><li>⭐ 45% of the points for one star, 65% for two, 85% for three.</li>`;
+  $('#introRules').innerHTML=`<li>📝 ${L.q} questions. No time limit.</li><li>⚡ Answer within ${L.bonus} seconds for a +5 speed bonus. Quick answers also turn facts gold on the Table Map.</li><li>⭐ 45% of the points for one star, 65% for two, 85% for three.</li><li>🪙 ${(S.stars[L.id]||0)>=3?'All stars won here. Coins now only come from facts that aren’t gold yet.':`Each new star pays ${starBonus(L)} coins. Facts pay coins as they level up, and hard facts pay the most.`}</li>`;
   $('#introPrizes').hidden=false;$('#startBtn').textContent='Start rescue';
 }
 function openRescue(id){
@@ -2537,13 +2555,12 @@ function answer(val,btn){
   const ok=String(val)===String(q.ans);
   if(q.mode==='mc')document.querySelectorAll('.opt').forEach(o=>{if(String(o.dataset.v)===String(q.ans))o.classList.add('right');else if(o===btn)o.classList.add('wrong');o.disabled=true});
   else $('#disp').classList.add(ok?'right':'wrong');
-  if(q.type!=='cmp')recordFact(q.a,q.b,ok,fast);
+  const gc=q.type!=='cmp'?recordFact(q.a,q.b,ok,fast):0;G.coins+=gc;
   const m=G.cfg.mode;
   if(ok){
     const pts=10+(fast?5:0);
     G.score+=pts;G.correct++;if(fast)G.speedy++;G.streak++;G.best=Math.max(G.best,G.streak);
-    if(m==='sprint'){G.coins+=fast?2:1}
-    sfx.ok();floaty(m==='sprint'?(fast?'+2 🪙':'+1 🪙'):fast?'+15 ⚡':'+10',btn||$('#disp'),fast);
+    sfx.ok();const ct=gc?` +${gc} 🪙`:'';floaty(m==='mission'?(fast?'+15 ⚡':'+10')+ct:(ct||'✓'),btn||$('#disp'),fast||gc>0);
     const c=$('#combo');c.textContent=`🔥 ${G.streak} in a row`;c.classList.toggle('on',G.streak>=3);
     if(m==='mission'||m==='rescue'){const tr=$('#trapped');tr.classList.remove('shake');void tr.offsetWidth;tr.classList.add('shake');progress()}
     headerPills();
@@ -2603,7 +2620,7 @@ function endGame(){
     const L=g.cfg.L,p=g.score/g.max,stars=STAR.filter(t=>p>=t).length,old=S.stars[L.id]||0;
     const newStars=Math.max(0,stars-old);S.stars[L.id]=Math.max(old,stars);
     for(let s=0;s<stars;s++){const t=g.prize[s];if(t&&!S.owned.includes(t.id)){rescueTurtle(t.id);rescued.push(t)}}
-    coins=g.correct+g.speedy+10*newStars;
+    coins=g.coins+starBonus(L)*newStars;g.starCoins=starBonus(L)*newStars;g.replay=old===3;
     const next=LEVELS[LEVELS.indexOf(L)+1];
     head=`<h2 style="text-align:center">${stars===3?'Perfect rescue!':stars?'Mission complete!':'The turtles are still trapped'}</h2><div class="bigstars" aria-label="${stars} of 3 stars">${starStr(stars)}</div>`
       +(stars===0?`<p style="text-align:center">You need 45% of the points for a star. Every try makes the facts stickier.</p>`:'')
@@ -2611,7 +2628,7 @@ function endGame(){
     body=statrow([`${g.correct}/${g.cfg.n}`,'correct'],[g.speedy,'speedy'],[g.best,'best streak']);
   }else if(m==='rescue'){
     const t=BYID[g.cfg.id],ok=g.correct>=g.cfg.pass;
-    if(ok){rescueTurtle(t.id);rescued.push(t);coins=5}
+    coins=g.coins;if(ok){rescueTurtle(t.id);rescued.push(t);coins+=5}
     head=`<h2 style="text-align:center">${ok?`${t.name} is home!`:`So close! ${t.name} is still trapped`}</h2>`+(ok?'':`<p style="text-align:center">You got ${g.correct} right. You need 8. Try again whenever you like.</p>`);
     body=statrow([`${g.correct}/10`,'correct'],[g.speedy,'speedy'],[g.best,'best streak']);
   }else if(m==='sprint'){
@@ -2619,7 +2636,7 @@ function endGame(){
     head=`<h2 style="text-align:center">⚡ ${g.correct} facts in 60 seconds!</h2>`+(best?`<p style="text-align:center"><b>New best! +5 bonus coins</b></p>`:`<p style="text-align:center">Your best is ${S.sprintBest}.</p>`);
     body=statrow([g.correct,'correct'],[g.speedy,'under 4 seconds'],[g.best,'best streak']);
   }else{
-    coins=g.correct+g.speedy;
+    coins=g.coins;
     head=`<h2 style="text-align:center">${g.cfg.tricky?'Tricky Ten done!':`The ${g.cfg.table} times table: done!`}</h2>`;
     body=statrow([`${g.correct}/${g.cfg.n}`,'correct'],[g.speedy,'speedy'],[g.best,'best streak']);
   }
@@ -2631,10 +2648,20 @@ function endGame(){
   const gold=g.newGold.length?`<div class="tipbox" style="border-left-color:var(--gold)"><b>⭐ New gold facts:</b> ${g.newGold.map(k=>{const[a,b]=k.split('x');return `${a} × ${b} = ${a*b}`}).join(' · ')}</div>`:'';
   const review=missedU.length?`<h3 class="tc-sec">Facts to practise</h3><ul class="review">${missedU.slice(0,6).map(q=>`<li><b>${factStr(q)}</b><br><span class="muted">${q.type==='cmp'?explain(q):explainFact(q.a,q.type==='miss'||q.type==='div'?q.ans:q.b)}</span></li>`).join('')}</ul>`:'';
   const again=m==='mission'?'Play again':m==='rescue'?(rescued.length?'':'Try again'):m==='sprint'?'Sprint again':'Practise again';
-  $('#resultsBody').innerHTML=head+body+meet+(coins?`<div class="coinbox"><h3>🪙 +${coins} coins</h3><span class="muted">You now have ${S.coins}. Spend them on fences, trampolines and instruments in the Shell Shop.</span></div>`:'')+gold+review+
+  $('#resultsBody').innerHTML=head+body+meet+`<div class="coinbox"><h3>🪙 +${coins} coins</h3>${coinLines(g,m)}<span class="muted">You now have ${S.coins}.</span></div>`+gold+review+
     `<div class="row end" style="margin-top:16px">${again?`<button class="btn alt" id="againBtn">${again}</button>`:''}${m==='mission'?'<button class="btn alt" data-go="missions">Missions</button>':''}<button class="btn" data-go="home">To the sanctuary</button></div>`;
   go('results');
   const ab=$('#againBtn');if(ab)ab.onclick=()=>{sfx.tap();startGame(g.cfg.mode==='drill'&&g.cfg.tricky?{...g.cfg,queue:weakest(10)}:{...g.cfg,queue:g.cfg.queue?weakest(10):undefined})};
+}
+
+function coinLines(g,m){
+  const rows=[];
+  if(g.starCoins)rows.push(['New stars',g.starCoins]);
+  if(g.coins)rows.push(['Facts levelled up on the Table Map',g.coins]);
+  let note='';
+  if(!g.coins&&!g.starCoins)note=g.replay?'This mission has all its stars and these facts are already strong, so there are no coins here. Try a harder mission or tackle the facts that aren’t gold yet.':'Coins come from new stars and from facts levelling up. Facts that are already gold don’t pay again.';
+  else note=`${coinsLeftAll()} coins still waiting in facts that aren’t gold. Hard facts like 7 × 8 pay the most.`;
+  return (rows.length?`<table>${rows.map(r=>`<tr><td>${r[0]}</td><td>+${r[1]}</td></tr>`).join('')}</table>`:'')+`<p class="muted" style="margin:6px 0 0">${note}</p>`;
 }
 
 /* ================= TABLE MAP ================= */
@@ -2661,7 +2688,7 @@ function renderMapDetail(){
   if(MAPSEL&&MAPSEL.a!=null){
     const{a,b}=MAPSEL,m=mrec(a,b);
     h=`<h3>${MLABEL[m.l]}</h3><div class="bigfact">${a} × ${b} = ${a*b}</div><p class="muted" style="margin:0">${a!==b?`Same as ${b} × ${a}. `:''}${a*b} ÷ ${a} = ${b}${a!==b?` and ${a*b} ÷ ${b} = ${a}`:''}.</p>
-      <div class="tipbox">💡 ${explainFact(a,b)}</div><p class="muted">Seen ${m.s} time${m.s===1?'':'s'}${m.w?`, missed ${m.w}`:''}.</p>
+      <div class="tipbox">💡 ${explainFact(a,b)}</div>${m.faded&&m.l<3?'<p><b>This fact faded after a few days away.</b> Turn it gold again to earn its coins back.</p>':''}<p class="muted">🪙 ${factCoinsLeft(a,b)?`Worth ${factCoinsLeft(a,b)} more coins until it’s gold.`:'Fully earned.'} Seen ${m.s} time${m.s===1?'':'s'}${m.w?`, missed ${m.w}`:''}.</p>
       <div class="row">${a>1?`<button class="btn" data-drill="${a}">Practise the ${a}s</button>`:''}${b!==a&&b>1?`<button class="btn alt" data-drill="${b}">Practise the ${b}s</button>`:''}</div>`;
   }else if(MAPSEL&&MAPSEL.t!=null){
     const n=MAPSEL.t;let gold=0;
@@ -2671,7 +2698,7 @@ function renderMapDetail(){
     let gold=0,learn=0,nw=0;for(let a=1;a<=12;a++)for(let b=a;b<=12;b++){const l=mrec(a,b).l;if(l===3)gold++;else if(l)learn++;else nw++}
     const tricky=Object.entries(S.m).filter(([,v])=>v.w>0&&v.l<3).sort((x,y)=>y[1].w-x[1].w).slice(0,8);
     h=`<h3>Your facts</h3><div class="statrow"><div class="stat"><b>${gold}</b><span>gold</span></div><div class="stat"><b>${learn}</b><span>learning</span></div><div class="stat"><b>${nw}</b><span>new</span></div></div>
-      <p style="margin:6px 0">Tap a square to see a trick for that fact, or tap a number on the edge for a whole table.</p>
+      <p style="margin:6px 0">🪙 <b>${coinsLeftAll()} coins</b> are waiting in facts that aren’t gold yet. Gold facts fade after ${FADE_DAYS} days away, so come back and keep them shiny.</p><p style="margin:6px 0">Tap a square to see a trick for that fact, or tap a number on the edge for a whole table.</p>
       ${tricky.length?`<h3 class="tc-sec" style="font-size:20px">Trickiest right now</h3><div class="tricky">${tricky.map(([k])=>{const[a,b]=k.split('x');return `<span>${a} × ${b}</span>`}).join('')}</div>`:''}
       <div class="row" style="margin-top:14px"><button class="btn" id="trickyBtn">🎯 Tricky Ten</button><button class="btn alt" id="mapSprint">⚡ Shell Sprint</button></div>`;
   }
@@ -2751,6 +2778,7 @@ function welcome(){
   $('#welOk').onclick=closeModal;
 }
 document.addEventListener('visibilitychange',()=>{lastT=performance.now()});
+decayFacts();
 updatePills();
 go('home');
 welcome();
